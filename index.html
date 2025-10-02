@@ -50,6 +50,17 @@
       padding: 20px;
       max-width: 80%;
     }
+
+    #flappyCanvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 1000;
+      background: rgba(135, 206, 235, 1);
+      cursor: pointer;
+    }
   </style>
 </head>
 
@@ -59,6 +70,10 @@
   text-align: center;
   padding: 20px;
   max-width: 80%;"></div>
+
+  <!-- Flappy Bird Easter Egg Canvas -->
+  <canvas id="flappyCanvas" style="display: none;"></canvas>
+
   <script>
     const SpeechRecognition = window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
@@ -66,6 +81,271 @@
 
     const cussWords = ['fuck', 'shit', 'bitch', 'piss', 'ass', 'cunt', 'pussy', 'faggot', 'dike', 'fag', 'asshole', 'jackass', 'dick', 'nigger', 'nigga', 'motherfucker', 'bullshit', 'cock', 'dumbass', 'hell', 'whore', 'fagot'];
     const randomMonkey = ['🙊', '🙉', '🙈'];
+
+    // ========== FLAPPY BIRD EASTER EGG ==========
+    const flappyCanvas = document.getElementById('flappyCanvas');
+    const flappyCtx = flappyCanvas.getContext('2d');
+    let flappyGameActive = false;
+    let flappyAnimationId = null;
+    let lastGameCommand = '';
+
+    // Set canvas size to fullscreen
+    function resizeFlappyCanvas() {
+      flappyCanvas.width = window.innerWidth;
+      flappyCanvas.height = window.innerHeight;
+    }
+    resizeFlappyCanvas();
+
+    // Game state
+    const flappyGame = {
+      bird: {
+        x: 100,
+        y: window.innerHeight / 2,
+        radius: 15,
+        velocity: 0,
+        gravity: 0.3,
+        jumpStrength: -7
+      },
+      pipes: [],
+      score: 0,
+      frameCount: 0,
+      pipeGap: 250,
+      pipeWidth: 60,
+      pipeSpeed: 2
+    };
+
+    function resetFlappyGame() {
+      flappyGame.bird.y = window.innerHeight / 2;
+      flappyGame.bird.velocity = 0;
+      flappyGame.pipes = [];
+      flappyGame.score = 0;
+      flappyGame.frameCount = 0;
+    }
+
+    function drawBird() {
+      flappyCtx.fillStyle = '#FFD700';
+      flappyCtx.beginPath();
+      flappyCtx.arc(flappyGame.bird.x, flappyGame.bird.y, flappyGame.bird.radius, 0, Math.PI * 2);
+      flappyCtx.fill();
+
+      // Bird eye
+      flappyCtx.fillStyle = '#000';
+      flappyCtx.beginPath();
+      flappyCtx.arc(flappyGame.bird.x + 5, flappyGame.bird.y - 3, 3, 0, Math.PI * 2);
+      flappyCtx.fill();
+    }
+
+    function generatePipe() {
+      const minHeight = 50;
+      const maxHeight = flappyCanvas.height - flappyGame.pipeGap - 50;
+      const topHeight = Math.random() * (maxHeight - minHeight) + minHeight;
+
+      flappyGame.pipes.push({
+        x: flappyCanvas.width,
+        topHeight: topHeight,
+        scored: false
+      });
+    }
+
+    function drawPipes() {
+      flappyCtx.fillStyle = '#228B22';
+      flappyGame.pipes.forEach(pipe => {
+        // Top pipe
+        flappyCtx.fillRect(pipe.x, 0, flappyGame.pipeWidth, pipe.topHeight);
+        // Bottom pipe
+        flappyCtx.fillRect(pipe.x, pipe.topHeight + flappyGame.pipeGap, flappyGame.pipeWidth, flappyCanvas.height);
+
+        // Pipe borders
+        flappyCtx.strokeStyle = '#1a6b1a';
+        flappyCtx.lineWidth = 3;
+        flappyCtx.strokeRect(pipe.x, 0, flappyGame.pipeWidth, pipe.topHeight);
+        flappyCtx.strokeRect(pipe.x, pipe.topHeight + flappyGame.pipeGap, flappyGame.pipeWidth, flappyCanvas.height);
+      });
+    }
+
+    function updatePipes() {
+      // Move pipes
+      flappyGame.pipes.forEach((pipe, index) => {
+        pipe.x -= flappyGame.pipeSpeed;
+
+        // Score when bird passes pipe
+        if (!pipe.scored && pipe.x + flappyGame.pipeWidth < flappyGame.bird.x) {
+          pipe.scored = true;
+          flappyGame.score++;
+        }
+
+        // Remove off-screen pipes
+        if (pipe.x + flappyGame.pipeWidth < 0) {
+          flappyGame.pipes.splice(index, 1);
+        }
+      });
+
+      // Generate new pipes
+      flappyGame.frameCount++;
+      if (flappyGame.frameCount % 180 === 0) {
+        generatePipe();
+      }
+    }
+
+    function updateBird() {
+      flappyGame.bird.velocity += flappyGame.bird.gravity;
+      flappyGame.bird.y += flappyGame.bird.velocity;
+    }
+
+    function checkCollision() {
+      const bird = flappyGame.bird;
+
+      // Ground/ceiling collision
+      if (bird.y + bird.radius > flappyCanvas.height || bird.y - bird.radius < 0) {
+        return true;
+      }
+
+      // Pipe collision
+      for (let pipe of flappyGame.pipes) {
+        if (
+          bird.x + bird.radius > pipe.x &&
+          bird.x - bird.radius < pipe.x + flappyGame.pipeWidth
+        ) {
+          if (
+            bird.y - bird.radius < pipe.topHeight ||
+            bird.y + bird.radius > pipe.topHeight + flappyGame.pipeGap
+          ) {
+            return true;
+          }
+        }
+      }
+
+      return false;
+    }
+
+    function drawScore() {
+      flappyCtx.fillStyle = '#FFF';
+      flappyCtx.font = 'bold 40px Arial';
+      flappyCtx.textAlign = 'center';
+      flappyCtx.fillText(flappyGame.score, flappyCanvas.width / 2, 60);
+    }
+
+    function flappyGameLoop() {
+      if (!flappyGameActive) return;
+
+      // Clear canvas
+      flappyCtx.fillStyle = '#87CEEB';
+      flappyCtx.fillRect(0, 0, flappyCanvas.width, flappyCanvas.height);
+
+      // Update
+      updateBird();
+      updatePipes();
+
+      // Draw
+      drawPipes();
+      drawBird();
+      drawScore();
+
+      // Check collision
+      if (checkCollision()) {
+        endFlappyGame();
+        return;
+      }
+
+      flappyAnimationId = requestAnimationFrame(flappyGameLoop);
+    }
+
+    function birdJump() {
+      if (flappyGameActive) {
+        flappyGame.bird.velocity = flappyGame.bird.jumpStrength;
+      }
+    }
+
+    function drawCountdown(count) {
+      // Draw grayed out game background
+      flappyCtx.fillStyle = '#87CEEB';
+      flappyCtx.fillRect(0, 0, flappyCanvas.width, flappyCanvas.height);
+
+      // Draw bird and pipes in grayed out state
+      flappyCtx.globalAlpha = 0.3;
+      drawBird();
+      if (flappyGame.pipes.length === 0) {
+        // Generate first pipe for preview
+        generatePipe();
+      }
+      drawPipes();
+      flappyCtx.globalAlpha = 1.0;
+
+      // Draw countdown number
+      flappyCtx.fillStyle = '#FFF';
+      flappyCtx.strokeStyle = '#000';
+      flappyCtx.lineWidth = 4;
+      flappyCtx.font = 'bold 120px Arial';
+      flappyCtx.textAlign = 'center';
+
+      // Draw text with outline
+      flappyCtx.strokeText(count, flappyCanvas.width / 2, flappyCanvas.height / 2 + 40);
+      flappyCtx.fillText(count, flappyCanvas.width / 2, flappyCanvas.height / 2 + 40);
+
+      // Draw "Get Ready!" text
+      flappyCtx.font = 'bold 36px Arial';
+      flappyCtx.strokeStyle = '#000';
+      flappyCtx.lineWidth = 3;
+      flappyCtx.strokeText('GET READY!', flappyCanvas.width / 2, flappyCanvas.height / 2 - 80);
+      flappyCtx.fillText('GET READY!', flappyCanvas.width / 2, flappyCanvas.height / 2 - 80);
+    }
+
+    function startCountdown() {
+      let count = 3;
+
+      function countdown() {
+        if (count > 0) {
+          drawCountdown(count);
+          count--;
+          setTimeout(countdown, 1000);
+        } else {
+          // Countdown finished, start game
+          flappyGameActive = true;
+          flappyGameLoop();
+        }
+      }
+
+      countdown();
+    }
+
+    function startFlappyBird() {
+      console.log('Starting Flappy Bird game!');
+      resizeFlappyCanvas(); // Ensure canvas is fullscreen
+      resetFlappyGame();
+      flappyCanvas.style.display = 'block';
+      startCountdown();
+    }
+
+    function endFlappyGame() {
+      flappyGameActive = false;
+      cancelAnimationFrame(flappyAnimationId);
+      console.log(`Game Over! Final Score: ${flappyGame.score}`);
+      closeFlappyGame();
+    }
+
+    function closeFlappyGame() {
+      flappyCanvas.style.display = 'none';
+      cancelAnimationFrame(flappyAnimationId);
+      console.log('Flappy Bird game closed. Returning to captions.');
+    }
+
+    // Event listeners for Flappy Bird
+    flappyCanvas.addEventListener('click', (e) => {
+      if (flappyGameActive) {
+        birdJump();
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' && flappyCanvas.style.display === 'block') {
+        e.preventDefault();
+        if (flappyGameActive) {
+          birdJump();
+        }
+      }
+    });
+
+    // ========== END FLAPPY BIRD EASTER EGG ==========
 
     // GLOOMY PALETTES - dark, moody aesthetic (all 140 CSS named colors)
     const gloomyPalettes = {
@@ -966,6 +1246,22 @@
         lastResetCommand = resetCommand;
       }
 
+      // Detect Flappy Bird easter egg command
+      let detectedGame = '';
+      for (let wordCount = 2; wordCount >= 1; wordCount--) {
+        let phrase = getLastNWords(wordCount);
+        if (phrase && phrase === 'flappybird') {
+          detectedGame = 'flappybird';
+          break;
+        }
+      }
+
+      if (detectedGame === 'flappybird' && lastGameCommand !== detectedGame) {
+        console.log('Flappy Bird easter egg activated!');
+        startFlappyBird();
+        lastGameCommand = detectedGame;
+      }
+
       // Reset command tracking on final results so new commands can work
       // Use a delay to prevent split-word commands from conflicting (e.g., "no bold" split into "no" and "bold")
       if (finalTranscript) {
@@ -983,6 +1279,7 @@
           lastDecorationCommand = '';
           lastPresetCommand = '';
           lastResetCommand = '';
+          lastGameCommand = '';
           // Also clear decoration blocks so user can re-enable them naturally
           recentlyDisabledDecorations.bold = false;
           recentlyDisabledDecorations.italic = false;
