@@ -75,13 +75,19 @@
       text-shadow: 0 1px 6px rgba(255, 255, 255, 0.4);
     }
 
-    /* Roll-up captions: bottom of the screen, left-aligned, at most 42 characters a line */
+    /* Roll-up captions: the line being spoken sits in the middle of the screen and
+       finished lines stack above it. Left-aligned, at most 42 characters a line. */
     #captions {
       position: fixed;
       left: 50%;
-      bottom: 12vh;
+      /* Half a line plus the bottom padding, so the bottom line is centered */
+      bottom: calc(50vh - 0.9em);
       transform: translateX(-50%);
-      width: min(90vw, 42ch);
+      /* width is set by measureBudget() */
+      /* Room for the text shadow, which the mask would otherwise cut off */
+      padding: 0.25em 0.5em;
+      /* The current line and the one above it stay solid; older lines fade out */
+      mask-image: linear-gradient(to top, #000 2.85em, transparent);
       font-size: calc(var(--scale) * clamp(1.75rem, 5.5vmin, 4.5rem));
       font-weight: 600;
       line-height: 1.3;
@@ -475,12 +481,13 @@
 
     // ========== CAPTION ENGINE ==========
     //
-    // Words flow onto the bottom line. When the bottom line is full, or a sentence
-    // ends, it moves up and the top line drops off (roll-up, like live TV).
+    // Words flow onto the bottom line, which sits in the middle of the screen. When it
+    // is full, or a sentence ends, it moves up and the oldest line drops off (roll-up,
+    // like live TV), fading out as it nears the top.
     // A line only moves up once every word on it is locked, so the recognizer revising
     // its guess can change the last few words but never a line that has moved up.
 
-    const MAX_LINES = 2;
+    const MAX_LINES = 5; // the line being spoken plus the finished lines above it
     const MAX_CHARS = 42;
     const STABLE_UPDATES = 2; // an interim word locks after surviving this many updates unchanged
     const FADE_AFTER_MS = 4000;
@@ -498,7 +505,8 @@
     let lineStart = 0; // index of the first word on the bottom line
     let sentenceEnd = 0; // a final result ended here, so the next words want a new line
     let commandIndex = 0; // words before this have been checked for voice commands
-    let budget = MAX_CHARS; // characters that fit on one line at the current size
+    let budget = 0; // pixels one line may use
+    const measureCtx = document.createElement("canvas").getContext("2d");
 
     // Words that start a natural new line, and words that must not end one
     const BREAK_BEFORE = new Set([
@@ -517,24 +525,21 @@
       return text.trim().split(/\s+/).filter(Boolean);
     }
 
+    // Width in pixels, measured in the caption font
     function lineLength(words) {
-      return words.join(" ").length;
+      return measureCtx.measureText(words.join(" ")).width;
     }
 
     // Fits as many words as the line holds, and always at least one
     function greedyFit(words, budget) {
-      let count = 0;
-      let length = -1;
-      while (count < words.length && length + 1 + words[count].length <= budget) {
-        length += 1 + words[count].length;
-        count++;
-      }
-      return Math.max(1, count);
+      let count = 1;
+      while (count < words.length && lineLength(words.slice(0, count + 1)) <= budget) count++;
+      return count;
     }
 
     // Decides where the bottom line ends once its words no longer fit.
     // `words` are the words from the start of the line; joined with spaces
-    // they are longer than `budget` characters. Returns how many of them stay on
+    // they are wider than `budget` pixels. Returns how many of them stay on
     // this line (at least 1); the rest start the next line.
     function findLineBreak(words, budget) {
       const max = greedyFit(words, budget);
@@ -664,14 +669,18 @@
       captionsEl.classList.remove("fading");
     }
 
-    // How many characters fit on a line at the current size and screen width
+    // A line gets the width of 42 characters of ordinary text in the caption font,
+    // or 90% of the screen if that's narrower, and the caption column is sized to match
     function measureBudget() {
       const style = getComputedStyle(captionsEl);
-      const ctx = document.createElement("canvas").getContext("2d");
-      ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-      const sample = "so the quick brown fox jumped over the lazy dog and kept on talking";
-      const average = ctx.measureText(sample).width / sample.length;
-      budget = Math.max(12, Math.min(MAX_CHARS, Math.floor((captionsEl.clientWidth / average) * 0.95)));
+      measureCtx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      const sample = "so the quick brown fox jumped over the lazy dog and kept on going";
+      const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+      budget = Math.min(
+        measureCtx.measureText(sample.slice(0, MAX_CHARS)).width,
+        document.documentElement.clientWidth * 0.9 - padding,
+      );
+      captionsEl.style.width = `${budget}px`;
     }
 
     // ========== VOICE COMMANDS ==========
